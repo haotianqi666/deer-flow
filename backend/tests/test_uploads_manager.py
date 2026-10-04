@@ -4,6 +4,7 @@ import errno
 import os
 import shutil
 import stat
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -389,6 +390,33 @@ class TestListFilesInDir:
 
         assert result["count"] == 4
         assert [f["filename"] for f in result["files"]] == [".env", ".upload-note.txt", "draft.part", "visible.txt"]
+
+    def test_skips_file_removed_during_scan(self, tmp_path):
+        class FakeScandir:
+            def __enter__(self):
+                return [
+                    SimpleNamespace(
+                        name="gone.txt",
+                        path=str(tmp_path / "gone.txt"),
+                        is_file=lambda *, follow_symlinks=False: True,
+                        stat=lambda *, follow_symlinks=False: (_ for _ in ()).throw(FileNotFoundError("gone")),
+                    ),
+                    SimpleNamespace(
+                        name="visible.txt",
+                        path=str(tmp_path / "visible.txt"),
+                        is_file=lambda *, follow_symlinks=False: True,
+                        stat=lambda *, follow_symlinks=False: SimpleNamespace(st_size=7, st_mtime=123.0),
+                    ),
+                ]
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with patch("deerflow.uploads.manager.os.scandir", return_value=FakeScandir()):
+            result = list_files_in_dir(tmp_path)
+
+        assert result["count"] == 1
+        assert result["files"][0]["filename"] == "visible.txt"
 
 
 # ---------------------------------------------------------------------------

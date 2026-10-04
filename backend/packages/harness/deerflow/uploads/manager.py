@@ -437,9 +437,12 @@ def list_files_in_dir(directory: Path) -> dict:
         for entry in sorted(entries, key=lambda e: e.name):
             if is_upload_staging_file(entry.name):
                 continue
-            if not entry.is_file(follow_symlinks=False):
+            try:
+                if not entry.is_file(follow_symlinks=False):
+                    continue
+                st = entry.stat(follow_symlinks=False)
+            except FileNotFoundError:
                 continue
-            st = entry.stat(follow_symlinks=False)
             files.append(
                 {
                     "filename": entry.name,
