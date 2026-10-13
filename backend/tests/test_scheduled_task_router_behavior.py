@@ -1524,6 +1524,36 @@ _CREATE = {"title": "Checklist", "prompt": "Check release-checklist.md.\nList th
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "echoed_fields",
+    [{}, {"schedule_type": "cron"}, {"timezone": "UTC"}, {"schedule_spec": {"cron": "0 9 * * *"}}, {"schedule_type": "cron", "schedule_spec": {"cron": " 0  9 * * * "}, "timezone": "UTC"}],
+    ids=["title-only", "type", "timezone", "spec", "full-schedule"],
+)
+@pytest.mark.parametrize("bounded", [False, True], ids=["unbounded", "end-before-next-occurrence"])
+async def test_cron_metadata_patch_preserves_due_occurrence(http, monkeypatch, echoed_fields, bounded):
+    due_at = datetime(2027, 1, 1, 9, tzinfo=UTC)
+    now = due_at + timedelta(seconds=1)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz)
+
+    monkeypatch.setattr(scheduled_tasks, "datetime", Clock)
+    await _seed(http.repo, schedule_type="cron", schedule_spec={"cron": "0 9 * * *"}, next_run_at=due_at, end_at=due_at + timedelta(seconds=30) if bounded else None)
+
+    response = await http.client.patch("/api/scheduled-tasks/task-l", json={"title": "Renamed report", **echoed_fields})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["title"] == "Renamed report"
+    stored = await http.repo.get("task-l", user_id=OWNER)
+    assert _when(stored) == due_at
+    due = await http.repo.claim_due_tasks(now=now, lease_owner="worker", lease_seconds=120, limit=10)
+    assert [task["id"] for task in due] == ["task-l"]
+    assert http.launches == []
+
+
+@pytest.mark.asyncio
 async def test_resume_recomputes_a_past_interval_run_from_now(http):
     await _seed(http.repo, next_run_at=datetime.now(UTC) - timedelta(hours=5))
     await http.repo.update("task-l", user_id=OWNER, updates={"status": "paused"})

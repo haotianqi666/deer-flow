@@ -257,11 +257,21 @@ def _recompute_schedule(existing: dict[str, Any], updates: dict[str, Any], *, sc
             upcoming = next_run_at(schedule_type, schedule_spec, timezone, now=now)
     except (ValueError, OverflowError) as exc:
         raise scheduler_error(422, "invalid_schedule", str(exc)) from exc
+    updates["schedule_spec"] = schedule_spec
+    if (
+        schedule_type == existing["schedule_type"] == "cron"
+        and schedule_spec["cron"] == existing["schedule_spec"].get("cron")
+        and timezone == existing["timezone"]
+        and existing["status"] in {"enabled", "paused"}
+        and existing.get("next_run_at") is not None
+    ):
+        # Leave the pending occurrence to the scheduler, including when already due.
+        # Do not write the snapshot back: dispatch may have advanced it since the read.
+        return
     # An unchanged future instant already passed admission; editing other fields does not re-apply the creation-time minimum delay.
     unchanged_once = schedule_type == existing["schedule_type"] == "once" and existing["status"] not in TERMINAL_TASK_STATUSES and upcoming is not None and upcoming == _as_datetime(existing["next_run_at"])
     if not unchanged_once:
         _check_once_time(schedule_type, _as_datetime(upcoming), scheduler_config=scheduler_config, now=now)
-    updates["schedule_spec"] = schedule_spec
     updates["next_run_at"] = upcoming
     # A terminal task whose schedule now has a future occurrence is re-armed:
     # claim_due_tasks only admits "enabled" rows. The repository then checks

@@ -2801,6 +2801,8 @@ Editing a one-time task's title or prompt preserves its original execution time,
 
 An unchanged one-time execution time can still be saved within `scheduler.min_once_delay_seconds` of its run. New execution times and reactivated finished tasks must satisfy that minimum delay.
 
+API and conversation updates that resend an enabled or paused task's unchanged cron expression and timezone preserve its pending occurrence, even if it is already due. Changing the schedule or reactivating a finished task still recalculates the next occurrence; explicitly resuming a paused task keeps the existing no-catch-up behavior.
+
 Current MVP capabilities:
 
 - Manage tasks at `/workspace/scheduled-tasks`

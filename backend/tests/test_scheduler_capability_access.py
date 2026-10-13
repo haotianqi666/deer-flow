@@ -632,6 +632,49 @@ async def _real_repos(monkeypatch, tmp_path, **setup):
     return prepare, sf, repo, runs, service, threads
 
 
+@pytest.mark.asyncio
+async def test_conversation_cron_update_keeps_the_due_occurrence(monkeypatch, tmp_path):
+    from app.gateway import scheduled_task_access as access
+    from deerflow.persistence.engine import close_engine
+
+    due_at = datetime(2027, 1, 1, 9, tzinfo=UTC)
+    now = due_at + timedelta(seconds=1)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz)
+
+    monkeypatch.setattr(access, "datetime", Clock)
+    prepare, _, repo, *_ = await _real_repos(monkeypatch, tmp_path)
+    try:
+        await repo.create(
+            task_id="task-1",
+            user_id="alice",
+            origin_thread_id="origin",
+            thread_id=None,
+            context_mode="fresh_thread_per_run",
+            assistant_id="lead_agent",
+            title="Report",
+            prompt="Prepare report",
+            schedule_type="cron",
+            schedule_spec={"cron": "0 9 * * *"},
+            timezone="UTC",
+            next_run_at=due_at,
+        )
+        capability = await prepare()
+        result = await capability.manage(action="update", request={"task_id": "task-1", "title": "Renamed report", "schedule_spec": {"cron": "0 9 * * *"}})
+
+        assert "error" not in result, result
+        stored = await repo.get("task-1", user_id="alice")
+        assert stored["title"] == "Renamed report"
+        assert datetime.fromisoformat(stored["next_run_at"]) == due_at
+        due = await repo.claim_due_tasks(now=now, lease_owner="worker", lease_seconds=120, limit=10)
+        assert [task["id"] for task in due] == ["task-1"]
+    finally:
+        await close_engine()
+
+
 async def _seed_task(repo, task_id="task-1", *, origin_thread_id="origin", schedule_spec=None, **extra):
     from _scheduled_rows import BASE
 

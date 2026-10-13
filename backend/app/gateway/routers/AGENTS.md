@@ -4,6 +4,12 @@ Shared scheduled-task update validation preserves an unchanged future `once`
 instant on a live task inside `scheduler.min_once_delay_seconds`; new/changed
 instants and terminal reactivation still enforce the minimum delay.
 
+Shared scheduled-task validation preserves a live cron task's pending occurrence
+when its normalized expression and timezone are unchanged. Omit `next_run_at`
+from that update rather than copying the read snapshot: dispatch may advance it
+before persistence. Changed schedules, missing occurrences, terminal reactivation
+and explicit resume retain their existing recalculation rules.
+
 The MCP task list accepts optional `TaskStatus` and `active_only` query filters.
 Pass both to the repository before its limit; preserve `threads:read`, owner
 checks, current-thread incarnation scoping, and the unfiltered array response.
