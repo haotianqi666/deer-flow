@@ -159,6 +159,10 @@ Parameters:
 - `--slide-images`: Absolute paths to slide images in order (required, space-separated)
 - `--output-file`: Absolute path to output PPTX file (required)
 
+Transparent slide images retain their transparency in the PPTX, including
+grayscale and palette-based PNGs. Opaque images retain JPEG encoding. Slide
+layout and speaker notes are unchanged.
+
 [!NOTE]
 Do NOT read the python file, just call it with the parameters.
 

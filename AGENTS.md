@@ -218,6 +218,8 @@ Repo-wide conventions:
   frontend tests live in `frontend/tests/`.
   Public skill script regressions live in `tests/skills/`; exercise dependency fallbacks
   with the optional import unavailable and mock HTTP transport to keep tests offline.
+  For PPT composition, verify the embedded image payload: alpha channels and PNG
+  transparency metadata must survive embedding; opaque images retain JPEG encoding.
 - **Before pushing** — backend `make format`, frontend `pnpm check`.
   Backend CI enforces `ruff format --check`.
 - **Skill text encoding** — use explicit UTF-8 for textual skill resources.

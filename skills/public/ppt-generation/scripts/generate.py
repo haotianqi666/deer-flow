@@ -60,8 +60,11 @@ def generate_ppt(
 
         # Load and process image
         with Image.open(image_path) as img:
-            # Convert to RGB if necessary (for PNG with transparency)
-            if img.mode in ("RGBA", "P"):
+            # JPEG cannot preserve alpha channels or PNG transparency metadata.
+            has_transparency = img.mode in ("RGBA", "LA") or "transparency" in img.info
+            if has_transparency:
+                img = img.convert("RGBA")
+            elif img.mode == "P":
                 img = img.convert("RGB")
 
             # Calculate dimensions to fill slide while maintaining aspect ratio
@@ -88,12 +91,19 @@ def generate_ppt(
 
             # Save processed image to bytes
             img_bytes = BytesIO()
-            img.save(img_bytes, format="JPEG", quality=95)
+            if has_transparency:
+                img.save(img_bytes, format="PNG")
+            else:
+                img.save(img_bytes, format="JPEG", quality=95)
             img_bytes.seek(0)
 
             # Add image to slide
             slide.shapes.add_picture(
-                img_bytes, left, top, Inches(new_width_emu / 914400), Inches(new_height_emu / 914400)
+                img_bytes,
+                left,
+                top,
+                Inches(new_width_emu / 914400),
+                Inches(new_height_emu / 914400),
             )
 
         # Add speaker notes if available in plan
