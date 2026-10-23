@@ -340,16 +340,6 @@ def generate_podcast(script_file: str, output_file: str,
     script = Script.from_dict(script_json)
     logger.info(f"Loaded script with {len(script.lines)} lines")
 
-    if transcript_file:
-        title = script_json.get("title", "Podcast Script")
-        markdown_content = generate_markdown(script, title)
-        transcript_dir = os.path.dirname(transcript_file)
-        if transcript_dir:
-            os.makedirs(transcript_dir, exist_ok=True)
-        with open(transcript_file, "w", encoding="utf-8") as f:
-            f.write(markdown_content)
-        logger.info(f"Generated transcript to {transcript_file}")
-
     audio_chunks = tts_node(script)
     if not audio_chunks:
         raise Exception("Failed to generate any audio")
@@ -360,6 +350,16 @@ def generate_podcast(script_file: str, output_file: str,
         os.makedirs(output_dir, exist_ok=True)
     with open(output_file, "wb") as f:
         f.write(output_audio)
+
+    if transcript_file:
+        title = script_json.get("title", "Podcast Script")
+        markdown_content = generate_markdown(script, title)
+        transcript_dir = os.path.dirname(transcript_file)
+        if transcript_dir:
+            os.makedirs(transcript_dir, exist_ok=True)
+        with open(transcript_file, "w", encoding="utf-8") as f:
+            f.write(markdown_content)
+        logger.info(f"Generated transcript to {transcript_file}")
 
     result = f"Successfully generated podcast to {output_file}"
     if transcript_file:

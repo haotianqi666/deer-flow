@@ -164,8 +164,9 @@ The generated podcast follows the "Hello Deer" format:
 ## Output Handling
 
 The command exits with status 1 and writes diagnostics to stderr if generation
-fails. Only present the MP3 after a successful command; an existing audio file
-or a newly written transcript does not establish that audio generation succeeded.
+fails. Transcripts are written only after the MP3 has been saved; synthesis
+failures leave existing audio and transcript files unchanged. Present the
+outputs only after the command succeeds.
 
 After generation:
 

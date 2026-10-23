@@ -1518,9 +1518,7 @@ A standard Agent Skill is a structured capability module — a Markdown file tha
 
 Skills are loaded progressively — only when the task needs them, not all at once. This keeps the context window lean and makes DeerFlow work well even with token-sensitive models.
 
-The bundled podcast-generation command returns a nonzero exit status and writes
-diagnostics to stderr when generation fails. Callers can check the status before
-presenting audio; an existing MP3 or generated transcript is not proof of success.
+See the [podcast generation skill](skills/public/podcast-generation/SKILL.md#output-handling) for CLI exit codes and output handling.
 
 When deferred skill discovery is enabled, `describe_skill` ranks installed skills by bounded, Unicode-normalized intent-term coverage across names and descriptions. Natural multi-term requests can therefore find a relevant skill without requiring one exact phrase, while exact `select:` and required-name `+prefix` lookups remain available. Ranked searches use up to 256 characters and return up to five results; exact `select:` lists are not truncated and return all requested catalog matches.
 

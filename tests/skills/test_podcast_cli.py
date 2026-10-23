@@ -50,6 +50,7 @@ def test_cli_failure_status(monkeypatch, tmp_path, case, error):
     if case in ("volcengine", "minimax"):
         monkeypatch.setenv("PODCAST_GENERATION_PROVIDER", case)
     output = tmp_path / "episode.mp3"
+    transcript = tmp_path / "episode.md"
 
     result = subprocess.run(
         [
@@ -59,6 +60,8 @@ def test_cli_failure_status(monkeypatch, tmp_path, case, error):
             str(script),
             "--output-file",
             str(output),
+            "--transcript-file",
+            str(transcript),
         ],
         capture_output=True,
         text=True,
@@ -71,13 +74,18 @@ def test_cli_failure_status(monkeypatch, tmp_path, case, error):
     assert "Error generating podcast:" in result.stderr
     assert error in result.stderr
     assert not output.exists()
+    assert not transcript.exists()
 
 
 @pytest.mark.parametrize("provider", ["volcengine", "minimax"])
 @pytest.mark.parametrize(
-    "outcome", ["success", "http-error", "connection-error", "empty-audio"]
+    "outcome",
+    ["success", "http-error", "connection-error", "empty-audio", "output-write-error"],
 )
-def test_cli_provider_outcome(monkeypatch, tmp_path, capsys, provider, outcome):
+@pytest.mark.parametrize("preexisting_outputs", [False, True])
+def test_cli_provider_outcome(
+    monkeypatch, tmp_path, capsys, provider, outcome, preexisting_outputs
+):
     monkeypatch.setenv("PODCAST_GENERATION_PROVIDER", provider)
     monkeypatch.setenv("VOLCENGINE_TTS_APPID", "test-app")
     monkeypatch.setenv("VOLCENGINE_TTS_ACCESS_TOKEN", "test-token")
@@ -85,8 +93,13 @@ def test_cli_provider_outcome(monkeypatch, tmp_path, capsys, provider, outcome):
     script = tmp_path / "script.json"
     script.write_text(json.dumps(SCRIPT_DATA), encoding="utf-8")
     output = tmp_path / "episode.mp3"
-    output.write_bytes(b"previous episode")
     transcript = tmp_path / "episode.md"
+    if outcome == "output-write-error":
+        output.mkdir()
+    elif preexisting_outputs:
+        output.write_bytes(b"previous episode")
+    if preexisting_outputs:
+        transcript.write_text("previous transcript", encoding="utf-8")
     monkeypatch.setattr(
         sys,
         "argv",
@@ -127,7 +140,16 @@ def test_cli_provider_outcome(monkeypatch, tmp_path, capsys, provider, outcome):
         with pytest.raises(SystemExit) as exc:
             runpy.run_path(str(SCRIPT), run_name="__main__")
         assert exc.value.code == 1
-        assert output.read_bytes() == b"previous episode"
+        if outcome == "output-write-error":
+            assert output.is_dir()
+        elif preexisting_outputs:
+            assert output.read_bytes() == b"previous episode"
+        else:
+            assert not output.exists()
+        if preexisting_outputs:
+            assert transcript.read_text(encoding="utf-8") == "previous transcript"
+        else:
+            assert not transcript.exists()
         captured = capsys.readouterr()
         assert captured.out == ""
         assert "Error generating podcast:" in captured.err
