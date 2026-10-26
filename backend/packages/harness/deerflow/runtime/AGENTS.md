@@ -63,6 +63,11 @@ Null input and `Command(resume=...)` also reject pending nodes except `__start__
 `CheckpointResumeRejected` skips pre-write rollback. Resume at head.
 Project MCP tasks only into dict input; `None`/`Command` retain checkpointed tasks
 without querying the repository or replacing the control input.
+For historical full-mode null continuation, carry the current goal/budget with
+`Command(update=...)`; never turn it into dict input or discard pending tasks.
+Keep caller-supplied resume commands intact. Pin goal edits and rollback in
+`test_goal_checkpoint_resume.py` and real HTTP/SQLite goal edits in
+`test_runtime_lifecycle_e2e.py`.
 
 Before changing checkpoint modes, caches, replay lookup, state replacement or
 rollback, read the [checkpoint contracts](../../../../docs/runtime-guidance-details.md#checkpoint-channel-modes-and-replay).

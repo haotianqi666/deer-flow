@@ -870,6 +870,66 @@ def test_static_breakpoint_resumes_with_null_input(isolated_app, checkpoint_mode
         assert "failed to project MCP task state" not in caplog.text
 
 
+@pytest.mark.parametrize("goal_change", ["clear", "change"])
+@pytest.mark.parametrize("interrupt_at", ["interrupt_before", "interrupt_after"])
+@pytest.mark.parametrize("endpoint", ["", "/wait", "/stream"])
+def test_historical_null_resume_preserves_goal_edits(isolated_app, goal_change, interrupt_at, endpoint):
+    from starlette.testclient import TestClient
+
+    from deerflow.config.app_config import get_app_config
+
+    get_app_config().database.checkpoint_channel_mode = "full"
+    model = FakeToolCallingModel(responses=[AIMessage(content="One model call."), AIMessage(content="Repeated model call.")])
+    evaluator = FakeToolCallingModel(responses=[AIMessage(content=json.dumps({"satisfied": False, "blocker": "external_wait", "reason": "Waiting for an external result", "evidence_summary": "", "relied_on_assumption": False}))])
+    with (
+        patch("deerflow.agents.lead_agent.agent.create_chat_model", return_value=model),
+        patch("deerflow.runtime.goal.create_chat_model", return_value=evaluator),
+        TestClient(isolated_app) as client,
+    ):
+        headers = {"X-CSRF-Token": _register_user(client)}
+        thread_id = _create_thread(client, headers["X-CSRF-Token"])
+        goal_path = f"/api/threads/{thread_id}/goal"
+        run_path = f"/api/threads/{thread_id}/runs"
+        initial_goal = client.put(goal_path, json={"objective": "Original objective"}, headers=headers)
+        assert initial_goal.status_code == 200, initial_goal.text
+        body = _run_body(
+            context={"thinking_enabled": False, "is_plan_mode": False, "subagent_enabled": False},
+            **{interrupt_at: ["model"]},
+        )
+        paused = client.post(f"{run_path}/wait", json=body, headers=headers)
+        assert paused.status_code == 200 and "__error__" not in paused.json(), paused.text
+        selected = client.get(f"/api/threads/{thread_id}/state").json()
+        assert selected["next"], selected
+        if goal_change == "clear":
+            edited = client.delete(goal_path, headers=headers)
+        else:
+            edited = client.put(goal_path, json={"objective": "Revised objective", "max_continuations": 1}, headers=headers)
+        assert edited.status_code == 200, edited.text
+        current_goal = edited.json()["goal"]
+        assert client.get(f"/api/threads/{thread_id}/state").json()["checkpoint_id"] != selected["checkpoint_id"]
+
+        resumed = client.post(f"{run_path}{endpoint}", json={**body, "input": None, "checkpoint_id": selected["checkpoint_id"]}, headers=headers)
+        assert resumed.status_code == 200, resumed.text
+        if not endpoint:
+            _wait_for_status(client, thread_id, resumed.json()["run_id"], "success")
+        elif endpoint == "/stream":
+            assert not any(event["event"] == "error" for event in _parse_sse(resumed.text)), resumed.text
+        else:
+            assert "__error__" not in resumed.json(), resumed.text
+        final = client.get(f"/api/threads/{thread_id}/state").json()
+        assert final["next"] == [], final
+        assert [m["content"] for m in final["values"]["messages"] if m["type"] == "ai"] == ["One model call."]
+        final_goal = client.get(goal_path).json()["goal"]
+        assert final["values"].get("goal") == final_goal
+        if current_goal is None:
+            assert final_goal is None
+        else:
+            # Normal goal judgment may add its verdict, but must not restore
+            # the historical objective, identity or continuation budget.
+            for key in ("objective", "created_at", "max_continuations", "continuation_count"):
+                assert final_goal[key] == current_goal[key]
+
+
 @pytest.mark.parametrize("checkpoint_mode", ["full", "delta"])
 def test_null_input_does_not_start_a_new_turn(isolated_app, checkpoint_mode):
     from starlette.testclient import TestClient

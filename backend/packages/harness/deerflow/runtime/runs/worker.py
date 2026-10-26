@@ -1471,17 +1471,23 @@ async def run_agent(
         # so a cleaned-up occurrence goal cannot be reintroduced by the input.
         configurable = config.get("configurable", {})
         selected_checkpoint_id = configurable.get("checkpoint_id")
-        if checkpointer is not None and mode == "full" and isinstance(graph_input, dict) and isinstance(selected_checkpoint_id, str) and selected_checkpoint_id and not configurable.get("checkpoint_ns"):
+        if checkpointer is not None and mode == "full" and (graph_input is None or isinstance(graph_input, dict)) and isinstance(selected_checkpoint_id, str) and selected_checkpoint_id and not configurable.get("checkpoint_ns"):
             async with _checkpoint_thread_lock(thread_id):
                 current = await accessor.aget(checkpoint_config)
                 if _checkpoint_id(current) != selected_checkpoint_id:
                     current_values = getattr(current, "values", None) or {}
-                    graph_input = dict(graph_input)
-                    if graph_input.get("goal") is None:
+                    goal_update = {"goal": Overwrite(copy.deepcopy(current_values.get("goal"))), "goal_outcome": None}
+                    if graph_input is None:
+                        # Command updates existing state without restarting at
+                        # __start__ or replacing the selected pending tasks.
+                        graph_input = Command(update=goal_update)
+                    else:
+                        graph_input = dict(graph_input)
                         # merge_goal ignores plain None, including a goal that
                         # the user cleared or completed after the selected turn.
-                        graph_input["goal"] = Overwrite(copy.deepcopy(current_values.get("goal")))
-                    graph_input["goal_outcome"] = None
+                        if graph_input.get("goal") is None:
+                            graph_input["goal"] = goal_update["goal"]
+                        graph_input["goal_outcome"] = None
 
         # Persist the model assembly resolved — the default when the request
         # named none, or a fallback when the requested model is unavailable —

@@ -199,6 +199,124 @@ async def test_checkpoint_replay_does_not_restore_a_cleaned_scheduled_goal(monke
     assert final.values.get("goal") is None
 
 
+@pytest.mark.parametrize("pause_at,rollback", [("before_model", False), ("after_model", False), ("completed", False), ("before_model", True), ("after_model", True)])
+@pytest.mark.parametrize("goal_change", ["clear", "change", "budget"])
+async def test_historical_null_resume_keeps_current_goal_and_pending_execution(monkeypatch, pause_at, rollback, goal_change):
+    saver = InMemorySaver()
+    thread_id = "goal-static-continuation"
+    config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+    original_goal = build_goal_state("Finish the original objective", now="2026-10-01T00:00:00Z")
+    calls = []
+    states = []
+    manager = RunManager()
+    record = await manager.create(thread_id)
+    resuming = False
+
+    async def prepare(_state):
+        calls.append("prepare")
+        return {}
+
+    async def model(state):
+        calls.append("model")
+        states.append(copy.deepcopy(state))
+        return {"messages": [AIMessage(id="answer", content="Only answer")]}
+
+    async def finish(state):
+        calls.append("finish")
+        states.append(copy.deepcopy(state))
+        if resuming and rollback:
+            record.abort_action = "rollback"
+            record.abort_event.set()
+        return {}
+
+    builder = StateGraph(get_thread_state_schema("full"))
+    for name, node in (("prepare", prepare), ("model", model), ("finish", finish)):
+        builder.add_node(name, node)
+    builder.set_entry_point("prepare")
+    builder.add_edge("prepare", "model")
+    builder.add_edge("model", "finish")
+    builder.set_finish_point("finish")
+    graph = builder.compile(checkpointer=saver)
+    await graph.ainvoke(
+        {"messages": [HumanMessage(id="request", content="Please finish")], "goal": original_goal},
+        config,
+        interrupt_before=["model"] if pause_at == "before_model" else None,
+        interrupt_after=["model"] if pause_at == "after_model" else None,
+    )
+    accessor = CheckpointStateAccessor.bind(graph, saver, mode="full")
+    selected = await accessor.aget(config)
+    assert selected.next == {"before_model": ("model",), "after_model": ("finish",), "completed": ()}[pause_at]
+    states.clear()
+    current_goal = {**original_goal, "continuation_count": 3, "no_progress_count": 1, "max_continuations": 5}
+    if goal_change == "clear":
+        current_goal = None
+    elif goal_change == "change":
+        current_goal.update(objective="Finish the revised objective", created_at="2026-10-02T00:00:00Z")
+    await write_thread_goal(saver, thread_id, current_goal)
+    head = await accessor.aget(config)
+    assert head.config["configurable"]["checkpoint_id"] != selected.config["configurable"]["checkpoint_id"]
+
+    monkeypatch.setattr(worker, "_prepare_goal_continuation_input", AsyncMock(return_value=None))
+    resuming = True
+    await worker.run_agent(
+        SimpleNamespace(publish=AsyncMock(), publish_end=AsyncMock(), cleanup=AsyncMock()),
+        manager,
+        record,
+        ctx=worker.RunContext(checkpointer=saver, checkpoint_channel_mode="full"),
+        agent_factory=lambda config: graph,
+        graph_input=None,
+        config=selected.config,
+        stream_modes=["values"],
+    )
+
+    assert record.status == (RunStatus.error if rollback else RunStatus.success)
+    assert calls == ["prepare", "model", "finish"]
+    assert len(states) == {"before_model": 2, "after_model": 1, "completed": 0}[pause_at]
+    assert all(state.get("goal") == current_goal for state in states)
+    final = await accessor.aget(config)
+    assert final.next == (head.next if rollback else ())
+    assert final.values.get("goal") == current_goal
+    expected_messages = head.values["messages"] if rollback else [HumanMessage(id="request", content="Please finish"), AIMessage(id="answer", content="Only answer")]
+    assert [(message.id, message.content) for message in final.values["messages"]] == [(message.id, message.content) for message in expected_messages]
+
+
+@pytest.mark.parametrize("select_head", [False, True])
+async def test_null_resume_at_head_keeps_goal_outcome_and_does_not_restart(monkeypatch, select_head):
+    saver = InMemorySaver()
+    config = {"configurable": {"thread_id": "goal-static-head", "checkpoint_ns": ""}}
+    goal = build_goal_state("Already finished")
+    outcome = build_goal_outcome(goal, {"satisfied": True, "blocker": "none", "reason": "Done"}, reply_message_id="answer")
+    model = AsyncMock(return_value={"messages": [AIMessage(id="answer", content="Done")], "goal_outcome": outcome})
+    builder = StateGraph(get_thread_state_schema("full"))
+    builder.add_node("model", model)
+    builder.set_entry_point("model")
+    builder.set_finish_point("model")
+    graph = builder.compile(checkpointer=saver)
+    await graph.ainvoke({"messages": [HumanMessage(content="Please finish")]}, config)
+    accessor = CheckpointStateAccessor.bind(graph, saver, mode="full")
+    head = await accessor.aget(config)
+    monkeypatch.setattr(worker, "_prepare_goal_continuation_input", AsyncMock(return_value=None))
+    manager = RunManager()
+    record = await manager.create("goal-static-head")
+    await worker.run_agent(
+        SimpleNamespace(publish=AsyncMock(), publish_end=AsyncMock(), cleanup=AsyncMock()),
+        manager,
+        record,
+        ctx=worker.RunContext(checkpointer=saver, checkpoint_channel_mode="full"),
+        agent_factory=lambda config: graph,
+        graph_input=None,
+        config=head.config if select_head else config,
+        stream_modes=["values"],
+    )
+
+    assert record.status == RunStatus.success
+    assert model.await_count == 1
+    final = await accessor.aget(config)
+    assert final.next == ()
+    assert final.values["goal_outcome"] == outcome
+    assert final.values.get("goal") is None
+
+
 async def test_historical_full_checkpoint_command_keeps_interrupt_resume_protocol(monkeypatch):
     saver = InMemorySaver()
     thread_id = "goal-interrupt-command"
